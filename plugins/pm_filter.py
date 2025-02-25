@@ -1,4 +1,6 @@
 import asyncio, re, ast, math, logging, pyrogram
+from imdb import IMDb
+from fuzzywuzzy import process
 from pyrogram.errors.exceptions.bad_request_400 import MediaEmpty, PhotoInvalidDimensions, WebpageMediaEmpty
 from Script import script
 from utils import get_shortlink 
@@ -50,7 +52,7 @@ async def pm_next_page(bot, query):
             btn = [[InlineKeyboardButton(text=f"{file.file_name}", callback_data=f'pmfile#{file.file_id}'),
                     InlineKeyboardButton(text=f"{get_size(file.file_size)}", callback_data=f'pmfile#{file.file_id}')] for file in files ]
 
-    btn.insert(0, [InlineKeyboardButton("🔗 ʜᴏᴡ ᴛᴏ ᴅᴏᴡɴʟᴏᴀᴅ 🔗", "https://t.me/Robo_5_0/63")])
+    btn.insert(0, [InlineKeyboardButton("🔗 ʜᴏᴡ ᴛᴏ ᴅᴏᴡɴʟᴏᴀᴅ 🔗", "howdl")])
     if 0 < offset <= 10: off_set = 0
     elif offset == 0: off_set = None
     else: off_set = offset - 10
@@ -104,7 +106,7 @@ async def pm_AutoFilter(client, msg, pmspoll=False):
         if 2 < len(message.text) < 100:
             search = message.text
             files, offset, total_results = await get_search_results(search.lower(), offset=0, filter=True)
-            if not files: return await ai_spell_check(chat_id = message.chat.id,wrong_name=search)             
+            if not files: return await pm_spoll_choker(msg)              
         else: return 
     else:
         message = msg.message.reply_to_message  # msg will be callback query
@@ -124,7 +126,7 @@ async def pm_AutoFilter(client, msg, pmspoll=False):
             btn = [[InlineKeyboardButton(text=f"{file.file_name}", callback_data=f'{pre}#{req}#{file.file_id}'),
                     InlineKeyboardButton(text=f"{get_size(file.file_size)}", callback_data=f'{pre}#{file.file_id}')] for file in files ]    
 
-    btn.insert(0, [InlineKeyboardButton("🔗 ʜᴏᴡ ᴛᴏ ᴅᴏᴡɴʟᴏᴀᴅ 🔗", "https://t.me/Robo_5_0/63")])
+    btn.insert(0, [InlineKeyboardButton("🔗 ʜᴏᴡ ᴛᴏ ᴅᴏᴡɴʟᴏᴀᴅ 🔗", "howdl")])
     if offset != "":
         key = f"{message.id}"
         temp.PM_BUTTONS[key] = search
@@ -201,60 +203,69 @@ async def pm_AutoFilter(client, msg, pmspoll=False):
     if pmspoll:
         await msg.message.delete()
 
-async def ai_spell_check(chat_id, wrong_name):
-    async def search_movie(wrong_name):
-        search_results = imdb.search_movie(wrong_name)
-        movie_list = [movielist['title'] for movielist in search_results]
-        return movie_list
-    movie_list = await search_movie(wrong_name)
-    if not movie_list:
-        return
-    for _ in range(5):
-        closest_match = process.extractOne(wrong_name, movie_list)
-        if not closest_match or closest_match[1] <= 80:
-            return 
-        movielist = closest_match[0]
-        files, offset, total_results = await get_search_results(chat_id=chat_id, query=movie)
-        if files:
-            return movielist
-        movie_list.remove(movie)
 
+
+imdb = IMDb()
+async def search_movie(wrong_name):
+    search_results = imdb.search_movie(wrong_name)
+    return [movie['title'] for movie in search_results]
 async def pm_spoll_choker(msg):
-    query = re.sub(r"\b(pl(i|e)*?(s|z+|ease|se|ese|(e+)s(e)?)|((send|snd|giv(e)?|gib)(\sme)?)|movie(s)?|new|latest|br((o|u)h?)*|^h(e|a)?(l)*(o)*|mal(ayalam)?|t(h)?amil|file|that|find|und(o)*|kit(t(i|y)?)?o(w)?|thar(u)?(o)*w?|kittum(o)*|aya(k)*(um(o)*)?|full\smovie|any(one)|with\ssubtitle(s)?)", "", msg.text, flags=re.IGNORECASE)  # plis contribute some common words
+    # Clean the user query
+    query = re.sub(r"\b(pl(i|e)*?(s|z+|ease|se|ese|(e+)s(e)?)|((send|snd|giv(e)?|gib)(\sme)?)|movie(s)?|new|latest|br((o|u)h?)*|^h(e|a)?(l)*(o)*|mal(ayalam)?|t(h)?amil|file|that|find|und(o)*|kit(t(i|y)?)?o(w)?|thar(u)?(o)*w?|kittum(o)*|aya(k)*(um(o)*)?|full\smovie|any(one)|with\ssubtitle(s)?)", "", msg.text, flags=re.IGNORECASE)
     query = query.strip() + " movie"
+
+    # Search Google and IMDb
     g_s = await search_gagala(query)
     g_s += await search_gagala(msg.text)
-    gs_parsed = []
+    
     if not g_s:
-        k = await msg.reply("I Cᴏᴜʟᴅɴ'ᴛ Fɪɴᴅ Aɴʏ Mᴏᴠɪᴇ Iɴ Tʜᴀᴛ Nᴀᴍᴇ", quote=True)
+        k = await msg.reply("I couldn't find any movie by that name.", quote=True)
         await asyncio.sleep(10)
         return await k.delete()
-    regex = re.compile(r".*(imdb|wikipedia).*", re.IGNORECASE)  # look for imdb / wiki results
+    
+    # Extract IMDb/Wikipedia links and parse movie names
+    regex = re.compile(r".*(imdb|wikipedia).*", re.IGNORECASE)
     gs = list(filter(regex.match, g_s))
-    gs_parsed = [re.sub(r'\b(\-([a-zA-Z-\s])\-\simdb|(\-\s)?imdb|(\-\s)?wikipedia|\(|\)|\-|reviews|full|all|episode(s)?|film|movie|series)', '', i, flags=re.IGNORECASE) for i in gs]
+    gs_parsed = [re.sub(r'\b(\-|\(|\)|\s(imdb|wikipedia|reviews|full|episode|film|movie|series))', '', i, flags=re.IGNORECASE) for i in gs]
+    
     if not gs_parsed:
-        reg = re.compile(r"watch(\s[a-zA-Z0-9_\s\-\(\)]*)*\|.*", re.IGNORECASE)  # match something like Watch Niram | Amazon Prime
+        reg = re.compile(r"watch(\s[a-zA-Z0-9_\s\-\(\)]*)*\|.*", re.IGNORECASE)
         for mv in g_s:
             match = reg.match(mv)
-            if match: gs_parsed.append(match.group(1))
+            if match:
+                gs_parsed.append(match.group(1))
+    
+    # Get user ID
     user = msg.from_user.id if msg.from_user else 0
-    movielist = []
-    gs_parsed = list(dict.fromkeys(gs_parsed))  # removing duplicates https://stackoverflow.com/a/7961425
-    if len(gs_parsed) > 3: gs_parsed = gs_parsed[:3]
-    if gs_parsed:
-        for mov in gs_parsed:
-            imdb_s = await get_poster(mov.strip(), bulk=True)  # searching each keyword in imdb
-            if imdb_s: movielist += [movie.get('title') for movie in imdb_s]
-    movielist += [(re.sub(r'(\-|\(|\)|_)', '', i, flags=re.IGNORECASE)).strip() for i in gs_parsed]
-    movielist = list(dict.fromkeys(movielist))  # removing duplicates
+
+    # Extract movie names
+    movielist = list(dict.fromkeys(gs_parsed))  # Remove duplicates
+
+    # If no movies found, return an error message
     if not movielist:
-        k = await msg.reply("I Cᴏᴜʟᴅɴ'ᴛ Fɪɴᴅ Aɴʏᴛʜɪɴɢ Rᴇʟᴀᴛᴇᴅ Tᴏ Tʜᴀᴛ. Cʜᴇᴄᴋ Yᴏᴜʀ Sᴘᴇʟʟɪɴɢ", quote=True)
+        k = await msg.reply("I couldn't find anything related to that. Check your spelling.", quote=True)
         await asyncio.sleep(10)
         return await k.delete()
+
+    # Apply fuzzy matching using ai_spell_check logic
+    movie_list = await search_movie(query)
+    for _ in range(5):
+        closest_match = process.extractOne(query, movie_list)
+        if not closest_match or closest_match[1] <= 80:
+            break
+        movie_name = closest_match[0]
+        files, offset, total_results = await get_search_results(chat_id=msg.chat.id, query=movie_name)
+        if files:
+            movielist.append(movie_name)
+        movie_list.remove(movie_name)
+
+    movielist = list(dict.fromkeys(movielist))  # Remove duplicates again
+
+    # Store suggestions for spell-check
     temp.PM_SPELL[str(msg.id)] = movielist
-    btn = [[InlineKeyboardButton(text=movie.strip(), callback_data=f"pmspolling#{user}#{k}")] for k, movie in enumerate(movielist)]
+
+    # Create inline buttons for user selection
+    btn = [[InlineKeyboardButton(text=movie.strip(), callback_data=f"pmspolling#{user}#{idx}")] for idx, movie in enumerate(movielist)]
     btn.append([InlineKeyboardButton(text="Close", callback_data=f'pmspolling#{user}#close_spellcheck')])
-    await msg.reply("I Cᴏᴜʟᴅɴ'ᴛ Fɪɴᴅ Aɴʏᴛʜɪɴɢ Rᴇʟᴀᴛᴇᴅ Tᴏ Tʜᴀᴛ. Dɪᴅ Yᴏᴜ Mᴇᴀɴ Aɴʏ Oɴᴇ Oғ Tʜᴇsᴇ?", reply_markup=InlineKeyboardMarkup(btn), quote=True)
 
-
-
+    await msg.reply("I couldn't find an exact match. Did you mean one of these?", reply_markup=InlineKeyboardMarkup(btn), quote=True)
